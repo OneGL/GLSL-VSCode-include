@@ -1,7 +1,9 @@
 import { Token } from 'antlr4ts';
 import { AbstractParseTreeVisitor } from 'antlr4ts/tree/AbstractParseTreeVisitor';
 import { RuleNode } from 'antlr4ts/tree/RuleNode';
-import { Uri } from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
+import { TextDocument, Uri, workspace } from 'vscode';
 import { AntlrGlslLexer } from '../_generated/AntlrGlslLexer';
 import {
     AntlrGlslParser,
@@ -37,12 +39,22 @@ import { Scope } from '../scope/scope';
 import { DocumentInfo } from './document-info';
 import { GlslEditor } from './glsl-editor';
 
+const documents: Map<string, TextDocument> = new Map();
+const EXTENSIONS = ['.glsl', '.vert', '.vs', '.frag', '.fs'];
+const INCLUDE_REGEX = /\s*#\s*include\s+"(.*?)"\s*/;
+
+export type IncludeError = {
+    message: string;
+    line: number;
+};
+
 export class GlslVisitor extends AbstractParseTreeVisitor<void> implements AntlrGlslParserVisitor<void> {
     private uri: Uri;
     private di: DocumentInfo;
     private scope: Scope;
 
     private currentFunction: FunctionDeclaration;
+    public includeErrors: IncludeError[] = [];
 
     public constructor(uri: Uri) {
         super();
@@ -81,6 +93,7 @@ export class GlslVisitor extends AbstractParseTreeVisitor<void> implements Antlr
 
     private addPreprocessorRegion(token: Token): void {
         if (token.type === AntlrGlslLexer.PREPROCESSOR) {
+            this.handleIncludePreprocessor(token);
             const interval = new Interval(token.startIndex, token.stopIndex + 1, this.di);
             const r = new RegExp('\\s*#\\s*extension\\s+.*?\\s*:\\s*.*?\\s*');
             let extension = '';
@@ -95,6 +108,65 @@ export class GlslVisitor extends AbstractParseTreeVisitor<void> implements Antlr
                 .getRegions()
                 .preprocessorRegions.push(new PreprocessorRegion(token.text, interval, extension, extensionState));
         }
+    }
+
+    private handleIncludePreprocessor(token: Token) {
+        const includeMatch = token.text.match(INCLUDE_REGEX);
+
+        if (!includeMatch) {
+            return;
+        }
+
+        const includePath = includeMatch[1];
+
+        let importPathAbsolute = includePath;
+
+        // Check if the import path is relative or absolute
+        if (includePath.startsWith('.')) {
+            importPathAbsolute = path.resolve(path.dirname(this.uri.fsPath), includePath);
+        }
+
+        // Check if the file exists
+        if (!fs.existsSync(importPathAbsolute)) {
+            this.includeErrors.push({
+                message: `File not found: ${importPathAbsolute}`,
+                line: token.line,
+            });
+            return;
+        }
+
+        // Check that the file has a valid extension
+        const ext = path.extname(importPathAbsolute);
+        if (!EXTENSIONS.includes(ext)) {
+            this.includeErrors.push({
+                message: `Invalid file extension: ${ext}\nValid extensions: ${EXTENSIONS.join(', ')}`,
+                line: token.line,
+            });
+            return;
+        }
+
+        workspace.openTextDocument(importPathAbsolute).then((document) => documents.set(importPathAbsolute, document));
+        const document = documents.get(importPathAbsolute);
+        const scope = this.di.getRootScope();
+
+        if (!document || !scope) {
+            return;
+        }
+
+        GlslEditor.processElements(document);
+        const importedDocumentInfo = GlslEditor.getDocumentInfo(document.uri);
+        const importedFileFunctions = importedDocumentInfo.getRootScope().functions;
+
+        for (const func of importedFileFunctions) {
+            const declaration = func.getDeclaration();
+
+            if (scope.functionDefinitions.findIndex((f) => f.name === declaration.name) === -1) {
+                declaration.isImported = true;
+                scope.functionDefinitions.push(declaration);
+            }
+        }
+
+        scope.functions.push(...importedFileFunctions);
     }
 
     private addCommentFoldingRegionBasedOnToken(ctx: CommentContext, token: Token, index: number): void {

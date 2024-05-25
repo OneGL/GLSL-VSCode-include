@@ -60,6 +60,8 @@ const webExtensionConfig = {
         extensions: ['.ts', '.js'],
         fallback: {
             assert: require.resolve('assert'),
+            path: false,
+            fs: false,
         },
     },
     module: {

@@ -15,7 +15,7 @@ import { VariableUsage } from '../scope/variable/variable-usage';
 import { Constants } from './constants';
 import { DocumentRegions } from './document-regions';
 import { GlslEditor } from './glsl-editor';
-import { GlslVisitor } from './glsl-visitor';
+import { GlslVisitor, IncludeError } from './glsl-visitor';
 
 export class DocumentInfo {
     private readonly uri: Uri;
@@ -46,6 +46,10 @@ export class DocumentInfo {
     public constructor(uri: Uri) {
         this.uri = uri;
         this.setShaderStage();
+    }
+
+    getIncludeErros(): IncludeError[] {
+        return this.visitor.includeErrors;
     }
 
     public reset(): void {

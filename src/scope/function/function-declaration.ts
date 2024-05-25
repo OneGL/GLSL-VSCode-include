@@ -11,6 +11,7 @@ import { LogicalFunction } from './logical-function';
 
 export class FunctionDeclaration extends Element {
     public logicalFunction: LogicalFunction;
+    public isImported: boolean = false;
     public readonly interval: Interval;
     public readonly returnType: TypeUsage;
     public readonly parameters = new Array<VariableDeclaration>();

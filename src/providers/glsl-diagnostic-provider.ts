@@ -5,6 +5,7 @@ import { Diagnostic, DiagnosticSeverity, DiagnosticTag, TextDocument, Uri, ViewC
 import { Constants } from '../core/constants';
 import { DocumentInfo } from '../core/document-info';
 import { GlslEditor } from '../core/glsl-editor';
+import { IncludeResolver } from '../includes/include-resolver';
 import { Element } from '../scope/element';
 import { FunctionDeclaration } from '../scope/function/function-declaration';
 import { LogicalFunction } from '../scope/function/logical-function';
@@ -21,7 +22,11 @@ export class GlslDiagnosticProvider {
     private document: TextDocument;
 
     private initialize(document: TextDocument): void {
-        GlslEditor.processElements(document);
+        try {
+            GlslEditor.processElements(document);
+        } catch (error) {
+            console.error('Error in process elements: ', error);
+        }
         this.di = GlslEditor.getDocumentInfo(document.uri);
         this.document = document;
     }
@@ -36,10 +41,25 @@ export class GlslDiagnosticProvider {
         this.addErrors();
     }
 
+    private addIncludeErrors() {
+        const includeErrors = this.di.getIncludeErros();
+
+        for (const error of includeErrors) {
+            this.diagnostics.push(
+                new Diagnostic(
+                    this.document.lineAt(error.line - 1 - this.linesAddedByImports).range,
+                    error.message,
+                    DiagnosticSeverity.Error
+                )
+            );
+        }
+    }
+
     private addHints(scope = this.di.getRootScope()): void {
         this.addFunctionHints(scope);
         this.addTypeHints(scope);
         this.addVariableHints(scope);
+
         for (const childScope of scope.children) {
             this.addHints(childScope);
         }
@@ -49,9 +69,18 @@ export class GlslDiagnosticProvider {
         for (const lf of scope.functions) {
             if (!lf.calls.length && !this.isTheMainFunction(lf) && !this.isConstructor(lf)) {
                 for (const fd of lf.definitions) {
+                    if (fd.isImported) {
+                        continue;
+                    }
+
                     this.addUnusedHint(fd, this.getUnusedFunctionMessage(fd));
                 }
+
                 for (const fp of lf.prototypes) {
+                    if (fp.isImported) {
+                        continue;
+                    }
+
                     this.addUnusedHint(fp, this.getUnusedFunctionMessage(fp));
                 }
             }
@@ -154,14 +183,18 @@ export class GlslDiagnosticProvider {
     private executeValidation(validatorPath: string, stageName: string): void {
         const result = exec(`${validatorPath} --stdin -C -S ${stageName}`);
         const lintId = this.increaseLintId();
+
         result.stdout.on('data', (data: string) => {
             this.handleErrors(data);
         });
+
         result.stdout.on('close', () => {
+            this.addIncludeErrors();
             if (lintId === this.getCurrentLintId() && !this.document.isClosed) {
                 GlslEditor.getDiagnosticCollection().set(this.document.uri, this.diagnostics);
             }
         });
+
         this.di.setInjectionError(false);
         this.provideInput(result);
     }
@@ -205,7 +238,11 @@ export class GlslDiagnosticProvider {
             if (line > 0) {
                 const error = row.substring(9 + i + 2);
                 this.diagnostics.push(
-                    new Diagnostic(this.document.lineAt(line - 1).range, error, DiagnosticSeverity.Error)
+                    new Diagnostic(
+                        this.document.lineAt(line - 1 - this.linesAddedByImports).range,
+                        error,
+                        DiagnosticSeverity.Error
+                    )
                 );
             } else {
                 this.di.setInjectionError(true);
@@ -217,16 +254,26 @@ export class GlslDiagnosticProvider {
             if (line > 0) {
                 const error = row.substring(11 + i + 2);
                 this.diagnostics.push(
-                    new Diagnostic(this.document.lineAt(line - 1).range, error, DiagnosticSeverity.Warning)
+                    new Diagnostic(
+                        this.document.lineAt(line - 1 - this.linesAddedByImports).range,
+                        error,
+                        DiagnosticSeverity.Warning
+                    )
                 );
             }
         }
     }
 
-    private provideInput(result: ChildProcess): void {
+    private linesAddedByImports = 0;
+
+    private async provideInput(result: ChildProcess): Promise<void> {
         const stdinStream = new Stream.Readable();
         const text = this.di.getText();
-        stdinStream.push(text);
+
+        let outputFile = await IncludeResolver.resolve(this.di.getDocument().uri.fsPath);
+        outputFile = outputFile.replace(/#\s*include/g, '// #include');
+        this.linesAddedByImports = outputFile.split('\n').length - text.split('\n').length;
+        stdinStream.push(outputFile);
         stdinStream.push(null);
         stdinStream.pipe(result.stdin);
     }

@@ -540,15 +540,17 @@ export class GlslCompletionProvider implements CompletionItemProvider {
 
     private getFunctionCompletionItem(lf: LogicalFunction): CompletionItem {
         for (const fd of lf.definitions) {
-            if (Helper.isALowerThanOffset(fd.interval, this.offset)) {
+            if (Helper.isALowerThanOffset(fd.interval, this.offset) || fd.isImported) {
                 return this.createUserFunctionCompletionItem(fd);
             }
         }
+
         for (const fp of lf.prototypes) {
-            if (Helper.isALowerThanOffset(fp.interval, this.offset)) {
+            if (Helper.isALowerThanOffset(fp.interval, this.offset) || fp.isImported) {
                 return this.createUserFunctionCompletionItem(fp);
             }
         }
+
         return null;
     }
 
