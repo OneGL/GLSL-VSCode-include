@@ -320,7 +320,7 @@
         "package-windows-x64": "vsce package --target win32-x64 --ignoreFile vscodeignore/windows.vscodeignore",
         "package-mac-x64": "vsce package --target darwin-x64 --ignoreFile vscodeignore/mac.vscodeignore",
         "package-linux-x64": "vsce package --target linux-x64 --ignoreFile vscodeignore/linux.vscodeignore",
-        "package-all": "start npm run package-universal && start npm run package-web && start npm run package-windows-x64 && start npm run package-mac-x64 && start npm run package-linux-x64",
+        "package-all": "npm run package-universal && npm run package-web && npm run package-windows-x64 && npm run package-mac-x64 && npm run package-linux-x64",
         "prepare": "husky install"
     },
     "devDependencies": {
